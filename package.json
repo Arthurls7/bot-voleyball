@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-lista-convidados",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp para gerenciar lista de convidados",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode-terminal": "^0.12.0",
+    "node-cron": "^3.0.3"
+  }
+}
