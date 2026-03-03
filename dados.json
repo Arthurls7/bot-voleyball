@@ -37,75 +37,51 @@
     "TITULO": "🦉 Corujão do Vôlei",
     "HORARIO_ENVIO_LISTA": {
       "diaSemana": 2,
-      "hora": 15,
-      "minuto": 42
+      "hora": 17,
+      "minuto": 15
     },
     "HORARIO_PROMOCAO": {
       "diaSemana": 2,
-      "hora": 15,
-      "minuto": 45
+      "hora": 17,
+      "minuto": 17
     },
     "HORARIO_LIMITE_PAGAMENTO": {
       "diaSemana": 2,
-      "hora": 15,
-      "minuto": 48
+      "hora": 17,
+      "minuto": 19
     },
     "HORARIO_FECHAMENTO_LISTA": {
       "diaSemana": 2,
-      "hora": 23,
-      "minuto": 59
+      "hora": 17,
+      "minuto": 21
     },
-    "COMANDOS_LISTA": [".entrar", ".sair", ".convidar", ".lista", ".remover", ".promover", ".pago", ".revezar"]
+    "COMANDOS_LISTA": [
+      ".entrar",
+      ".sair",
+      ".convidar",
+      ".lista",
+      ".remover",
+      ".promover",
+      ".pago",
+      ".revezar"
+    ]
   },
   "apelidos": {
     "558293898359": "Testando nome apelidado"
   },
   "listaPrincipal": [
     {
-      "nome": "Sophia admin",
-      "numero": "558293456692",
-      "adicionadoEm": "2026-03-03T18:42:41.711Z"
-    },
-    {
-      "nome": "suzy",
-      "numero": null,
-      "adicionadoEm": "2026-03-03T18:45:11.687Z",
-      "convidadoPor": "558288881242",
-      "convidadoPorNome": "DenilsonB",
-      "convidado": true,
-      "pago": true,
-      "pagamentoEm": "2026-03-03T18:45:35.843Z"
-    },
-    {
-      "nome": "Ayron",
-      "numero": null,
-      "adicionadoEm": "2026-03-03T18:43:05.132Z",
-      "convidadoPor": "558288199656",
-      "convidadoPorNome": "Diego Matheus",
-      "convidado": true,
-      "pago": true,
-      "pagamentoEm": "2026-03-03T18:48:55.407Z",
-      "promovidoEm": "2026-03-03T18:48:55.407Z"
-    },
-    {
       "nome": "Denilson",
       "numero": "558288881242",
-      "adicionadoEm": "2026-03-03T18:51:02.590Z"
+      "adicionadoEm": "2026-03-03T20:18:28.059Z"
     }
   ],
   "listaReservas": [],
   "listaEspera": [
     {
-      "nome": "Testando nome apelidado",
-      "numero": "558293898359",
-      "adicionadoEm": "2026-03-03T18:44:09.397Z",
-      "convidadoPor": null,
-      "removidoPorFaltaPagamento": true
-    },
-    {
       "nome": "Mesquita",
       "numero": "558293636454",
-      "adicionadoEm": "2026-03-03T18:49:48.817Z",
+      "adicionadoEm": "2026-03-03T20:18:31.185Z",
       "convidadoPor": null
     }
   ]

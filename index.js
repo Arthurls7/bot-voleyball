@@ -6,7 +6,12 @@ const cron = require("node-cron");
 const ARQUIVO_DADOS = "./dados.json";
 
 function carregarDados() {
-  if (fs.existsSync(ARQUIVO_DADOS)) return JSON.parse(fs.readFileSync(ARQUIVO_DADOS, "utf8"));
+  if (fs.existsSync(ARQUIVO_DADOS)) {
+    const d = JSON.parse(fs.readFileSync(ARQUIVO_DADOS, "utf8"));
+    console.log("[carregarDados] OK — GROUP_ID:", d.config?.GROUP_ID, "| ADMINS:", d.config?.ADMINS?.length, "| FIXOS:", d.config?.FIXOS?.length);
+    return d;
+  }
+  console.warn("[carregarDados] Arquivo não encontrado, usando dados padrão.");
   return { config: {}, apelidos: {}, listaPrincipal: [], listaReservas: [], listaEspera: [] };
 }
 function salvarDados(d) { fs.writeFileSync(ARQUIVO_DADOS, JSON.stringify(d, null, 2)); }
@@ -46,14 +51,19 @@ const client = new Client({
 });
 
 client.on("qr", (qr) => { console.log("\nEscaneie o QR Code:\n"); qrcode.generate(qr, { small: true }); });
-client.on("ready", () => { console.log("Bot pronto!"); agendarEnvioSemanal(); });
-client.on("auth_failure", () => { console.error("Falha na autenticacao."); });
+client.on("ready", () => {
+  console.log("Bot pronto!");
+  console.log("[ready] wid:", client.info?.wid?._serialized);
+  agendarEnvioSemanal();
+});
+client.on("auth_failure", (msg) => { console.error("Falha na autenticacao:", msg); });
+client.on("disconnected", (reason) => { console.error("[disconnected]", reason); });
 
 client.on("message", async (msg) => {
   try {
     if (msg.from === "status@broadcast") return;
     let chat;
-    try { chat = await msg.getChat(); } catch (e) { return; }
+    try { chat = await msg.getChat(); } catch (e) { console.error("[message] Erro ao getChat:", e.message); return; }
     if (!chat.isGroup) return;
 
     dados = carregarDados();
@@ -64,6 +74,9 @@ client.on("message", async (msg) => {
     const texto   = msg.body.trim();
     const ok      = chat.id._serialized === CONFIG().GROUP_ID;
     const meuNome = nomeExibicao(numero, nomeWpp);
+    console.log(`[message] de=${numero} nome="${meuNome}" texto="${texto.slice(0,60)}" grupo=${ok}`);
+
+    if (!ok) return; // ignora mensagens fora do grupo configurado
 
     // Bloqueia comandos de lista fora do horário
     const _cmdTexto      = texto.toLowerCase().split(" ")[0];
@@ -80,7 +93,6 @@ client.on("message", async (msg) => {
 
     // .apelido NovoNome
     if (texto.toLowerCase().startsWith(".apelido ")) {
-      if (!ok) return;
       const novoNome = texto.slice(9).trim();
       if (!novoNome) { await msg.reply("❓ Use: .apelido Seu Apelido"); return; }
       const apelidoAnterior = getApelido(numero);
@@ -97,33 +109,35 @@ client.on("message", async (msg) => {
 
     // .entrar / .entrar NomeFixo
     if (texto.toLowerCase() === ".entrar" || texto.toLowerCase().startsWith(".entrar ")) {
-      if (!ok) return;
       const param = texto.length > 7 ? texto.slice(7).trim() : null;
 
       if (param) {
-        if (!isFixo(numero)) {
-          await msg.reply(`⛔ *${meuNome}*, apenas fixos podem confirmar a entrada de outras pessoas.\n_Para entrar na lista use apenas .entrar_`);
-          return;
-        }
         const cadastro = getFixoByNome(param);
-        if (!cadastro || cadastro.numero !== null) {
-          await msg.reply(`❓ *${param}* não é um fixo sem número cadastrado.\n_Para entrar na lista use apenas .entrar_`);
+        if (!cadastro) {
+          await msg.reply(`⛔ *${param}* não está na lista de fixos. Entrada não permitida.`);
           return;
         }
-        const jaP = dados.listaPrincipal.find((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase());
-        const jaE = dados.listaEspera.find((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase());
-        if (jaP) { await msg.reply(`✅ *${cadastro.nome}* já está na lista principal!`); return; }
+        const numCadastro = cadastro.numero;
+        const jaP = numCadastro !== null
+          ? dados.listaPrincipal.find((p) => p.numero === numCadastro)
+          : dados.listaPrincipal.find((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase());
+        const jaE = numCadastro !== null
+          ? dados.listaEspera.find((p) => p.numero === numCadastro)
+          : dados.listaEspera.find((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase());
+        if (jaP) { await msg.reply(`✅ *${cadastro.nome}* já está na lista de fixos!`); return; }
         if (jaE) {
-          const pos = dados.listaEspera.findIndex((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase()) + 1;
+          const pos = (numCadastro !== null
+            ? dados.listaEspera.findIndex((p) => p.numero === numCadastro)
+            : dados.listaEspera.findIndex((p) => p.numero === null && p.nome.toLowerCase() === cadastro.nome.toLowerCase())) + 1;
           await msg.reply(`⏳ *${cadastro.nome}* já está na lista de espera (posição ${pos}).`);
           return;
         }
         if (dados.listaPrincipal.length < CONFIG().LIMITE_LISTA_PRINCIPAL) {
-          dados.listaPrincipal.push({ nome: cadastro.nome, numero: null, adicionadoEm: new Date().toISOString(), confirmadoPor: meuNome });
+          dados.listaPrincipal.push({ nome: cadastro.nome, numero: numCadastro, adicionadoEm: new Date().toISOString(), confirmadoPor: meuNome });
           salvarDados(dados);
-          await msg.reply(`✅ *${cadastro.nome}* adicionado à lista principal! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})\n_Confirmado por: ${meuNome}_`);
+          await msg.reply(`✅ *${cadastro.nome}* adicionado à lista de fixos! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})\n_Confirmado por: ${meuNome}_`);
         } else {
-          dados.listaEspera.push({ nome: cadastro.nome, numero: null, adicionadoEm: new Date().toISOString(), convidadoPor: numero, convidadoPorNome: meuNome });
+          dados.listaEspera.push({ nome: cadastro.nome, numero: numCadastro, adicionadoEm: new Date().toISOString(), convidadoPor: numero, convidadoPorNome: meuNome });
           salvarDados(dados);
           await msg.reply(`⏳ Lista cheia. *${cadastro.nome}* foi para a espera (posição ${dados.listaEspera.length}).\n_Confirmado por: ${meuNome}_`);
         }
@@ -133,7 +147,7 @@ client.on("message", async (msg) => {
       const nome = meuNome;
       const jaP = dados.listaPrincipal.find((p) => p.numero === numero);
       const jaE = dados.listaEspera.find((p) => p.numero === numero);
-      if (jaP) { await msg.reply(`✅ *${jaP.nome}*, você já está na lista principal!`); return; }
+      if (jaP) { await msg.reply(`✅ *${jaP.nome}*, você já está na lista de fixos!`); return; }
       if (jaE) {
         const pos = dados.listaEspera.findIndex((p) => p.numero === numero) + 1;
         await msg.reply(`⏳ *${jaE.nome}*, você já está na lista de espera (posição ${pos}).`);
@@ -142,24 +156,31 @@ client.on("message", async (msg) => {
       if (isFixo(numero) && dados.listaPrincipal.length < CONFIG().LIMITE_LISTA_PRINCIPAL) {
         dados.listaPrincipal.push({ nome, numero, adicionadoEm: new Date().toISOString() });
         salvarDados(dados);
-        await msg.reply(`✅ *${nome}*, você foi adicionado à lista principal! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})`);
+        await msg.reply(`✅ *${nome}*, você foi adicionado à lista de fixos! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})`);
       } else {
         dados.listaEspera.push({ nome, numero, adicionadoEm: new Date().toISOString(), convidadoPor: null });
         salvarDados(dados);
-        const motivo = isFixo(numero) ? "a lista principal está cheia" : "você não está nos fixos";
+        const motivo = isFixo(numero) ? "a lista de fixos está cheia" : "você não está nos fixos";
         await msg.reply(`⏳ *${nome}*, ${motivo}. Você foi para a lista de espera (posição ${dados.listaEspera.length}).`);
       }
     }
 
     // .sair
     else if (texto.toLowerCase() === ".sair") {
-      if (!ok) return;
       const iP = dados.listaPrincipal.findIndex((p) => p.numero === numero);
       const iE = dados.listaEspera.findIndex((p) => p.numero === numero);
       if (iP !== -1) {
         const nome = dados.listaPrincipal[iP].nome;
-        dados.listaPrincipal.splice(iP, 1); salvarDados(dados);
-        await msg.reply(`👋 *${nome}*, você saiu da lista principal.`);
+        dados.listaPrincipal.splice(iP, 1);
+        const reservasRemovidas = (dados.listaReservas || []).filter((r) => r.revezaCom.toLowerCase() === nome.toLowerCase());
+        dados.listaReservas = (dados.listaReservas || []).filter((r) => r.revezaCom.toLowerCase() !== nome.toLowerCase());
+        salvarDados(dados);
+        let resposta = `👋 *${nome}*, você saiu da lista de fixos.`;
+        if (reservasRemovidas.length > 0) {
+          const nomes = reservasRemovidas.map((r) => `*${r.nome}*`).join(", ");
+          resposta += `\n_Reserva(s) removida(s): ${nomes}_`;
+        }
+        await msg.reply(resposta);
       } else if (iE !== -1) {
         const nome = dados.listaEspera[iE].nome;
         dados.listaEspera.splice(iE, 1); salvarDados(dados);
@@ -171,18 +192,17 @@ client.on("message", async (msg) => {
 
     // .convidar Nome
     else if (texto.toLowerCase().startsWith(".convidar ")) {
-      if (!ok) return;
       const nomeConv = texto.slice(10).trim();
       if (!nomeConv) { await msg.reply("❓ Use: .convidar Nome do Convidado"); return; }
       const nomeConvLower = nomeConv.toLowerCase();
       const naPrincipal = dados.listaPrincipal.find((p) => p.nome.toLowerCase() === nomeConvLower);
       const naEspera    = dados.listaEspera.find((p) => p.nome.toLowerCase() === nomeConvLower);
-      if (naPrincipal) { await msg.reply(`⚠️ *${nomeConv}* já está na lista principal!`); return; }
+      if (naPrincipal) { await msg.reply(`⚠️ *${nomeConv}* já está na lista de fixos!`); return; }
       if (naEspera) { await msg.reply(`⚠️ *${nomeConv}* já está na lista de espera!${naEspera.convidadoPorNome ? ` Convidado por ${naEspera.convidadoPorNome}.` : ""}`); return; }
       if (dados.listaPrincipal.length < CONFIG().LIMITE_LISTA_PRINCIPAL) {
         dados.listaPrincipal.push({ nome: nomeConv, numero: null, adicionadoEm: new Date().toISOString(), convidadoPor: numero, convidadoPorNome: meuNome, convidado: true, pago: false });
         salvarDados(dados);
-        await msg.reply(`✅ *${nomeConv}* adicionado à lista principal! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})\n_Convidado por: ${meuNome} · ⏳ Aguardando pagamento_`);
+        await msg.reply(`✅ *${nomeConv}* adicionado à lista de fixos! (${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL})\n_Convidado por: ${meuNome} · ⏳ Aguardando pagamento_`);
       } else {
         dados.listaEspera.push({ nome: nomeConv, numero: null, adicionadoEm: new Date().toISOString(), convidadoPor: numero, convidadoPorNome: meuNome });
         salvarDados(dados);
@@ -192,13 +212,11 @@ client.on("message", async (msg) => {
 
     // .lista
     else if (texto.toLowerCase() === ".lista") {
-      if (!ok) return;
       await enviarLista(chat);
     }
 
     // .revezar Nome1 Nome2
     else if (texto.toLowerCase().startsWith(".revezar ")) {
-      if (!ok) return;
       const partes = texto.slice(9).trim();
       // Divide pelo último espaço para permitir nomes compostos em Nome1
       const ultimoEspaco = partes.lastIndexOf(" ");
@@ -209,7 +227,7 @@ client.on("message", async (msg) => {
 
       const pessoaNaLista = dados.listaPrincipal.find((p) => p.nome.toLowerCase() === nomeLista.toLowerCase());
       if (!pessoaNaLista) {
-        await msg.reply(`❓ *${nomeLista}* não foi encontrado(a) na lista principal.\n_A pessoa que vai revezar precisa já estar na lista._`);
+        await msg.reply(`❓ *${nomeLista}* não foi encontrado(a) na lista de fixos.\n_A pessoa que vai revezar precisa já estar na lista._`);
         return;
       }
 
@@ -217,7 +235,7 @@ client.on("message", async (msg) => {
       const jaP       = dados.listaPrincipal.find((p) => p.nome.toLowerCase() === nomeReserva.toLowerCase());
       const jaE       = dados.listaEspera.find((p) => p.nome.toLowerCase() === nomeReserva.toLowerCase());
       if (jaReserva) { await msg.reply(`⚠️ *${nomeReserva}* já é reserva de *${jaReserva.revezaCom}*.`); return; }
-      if (jaP)       { await msg.reply(`⚠️ *${nomeReserva}* já está na lista principal!`); return; }
+      if (jaP)       { await msg.reply(`⚠️ *${nomeReserva}* já está na lista de fixos!`); return; }
       if (jaE)       { await msg.reply(`⚠️ *${nomeReserva}* já está na lista de espera!`); return; }
 
       if (!dados.listaReservas) dados.listaReservas = [];
@@ -235,7 +253,6 @@ client.on("message", async (msg) => {
 
     // .fixos
     else if (texto.toLowerCase() === ".fixos") {
-      if (!ok) return;
       const admins = CONFIG().ADMINS;
       const fixos  = CONFIG().FIXOS;
       let t = `*${CONFIG().TITULO}*\n\n`;
@@ -251,13 +268,12 @@ client.on("message", async (msg) => {
 
     // .remover Nome
     else if (texto.toLowerCase().startsWith(".remover ")) {
-      if (!ok) return;
       const nomeBusca = texto.slice(9).trim().toLowerCase();
       if (isAdmin(numero)) {
         const iP  = dados.listaPrincipal.findIndex((p) => p.nome.toLowerCase().includes(nomeBusca));
         const iE  = dados.listaEspera.findIndex((p) => p.nome.toLowerCase().includes(nomeBusca));
         const iR  = (dados.listaReservas || []).findIndex((p) => p.nome.toLowerCase().includes(nomeBusca));
-        if (iP !== -1)       { const r = dados.listaPrincipal.splice(iP, 1)[0]; salvarDados(dados); await msg.reply(`🗑️ *${r.nome}* removido da lista principal.`); }
+        if (iP !== -1)       { const r = dados.listaPrincipal.splice(iP, 1)[0]; salvarDados(dados); await msg.reply(`🗑️ *${r.nome}* removido da lista de fixos.`); }
         else if (iE !== -1)  { const r = dados.listaEspera.splice(iE, 1)[0]; salvarDados(dados); await msg.reply(`🗑️ *${r.nome}* removido da lista de espera.`); }
         else if (iR !== -1)  { const r = dados.listaReservas.splice(iR, 1)[0]; salvarDados(dados); await msg.reply(`🗑️ *${r.nome}* removido das reservas.`); }
         else { await msg.reply(`❓ Ninguém encontrado com "${nomeBusca}".`); }
@@ -272,12 +288,11 @@ client.on("message", async (msg) => {
 
     // .promover Nome
     else if (texto.toLowerCase().startsWith(".promover ")) {
-      if (!ok) return;
       if (!isAdmin(numero)) { await msg.reply(`⛔ *${meuNome}*, apenas administradores podem usar .promover.`); return; }
       const nomeBusca = texto.slice(10).trim().toLowerCase();
       const iE = dados.listaEspera.findIndex((p) => p.nome.toLowerCase().includes(nomeBusca));
       if (iE === -1) { await msg.reply(`❓ "${nomeBusca}" não encontrado na lista de espera.`); return; }
-      if (dados.listaPrincipal.length >= CONFIG().LIMITE_LISTA_PRINCIPAL) { await msg.reply("⚠️ Lista principal cheia. Remova alguém primeiro."); return; }
+      if (dados.listaPrincipal.length >= CONFIG().LIMITE_LISTA_PRINCIPAL) { await msg.reply("⚠️ Lista de fixos cheia. Remova alguém primeiro."); return; }
       const [promovido] = dados.listaEspera.splice(iE, 1);
       dados.listaPrincipal.push({ ...promovido, convidado: true, pago: false, adicionadoEm: new Date().toISOString(), promovidoEm: new Date().toISOString() });
       salvarDados(dados);
@@ -286,11 +301,10 @@ client.on("message", async (msg) => {
 
     // .pago Nome
     else if (texto.toLowerCase().startsWith(".pago ")) {
-      if (!ok) return;
       if (!isAdmin(numero)) { await msg.reply(`⛔ *${meuNome}*, apenas administradores podem confirmar pagamentos.`); return; }
       const nomeBusca = texto.slice(6).trim().toLowerCase();
 
-      // Convidado ainda na lista principal (antes do prazo)
+      // Convidado ainda na lista de fixos (antes do prazo)
       const iP = dados.listaPrincipal.findIndex((p) => p.convidado && p.nome.toLowerCase().includes(nomeBusca));
       if (iP !== -1) {
         if (dados.listaPrincipal[iP].pago) { await msg.reply(`✅ *${dados.listaPrincipal[iP].nome}* já está marcado como pago.`); return; }
@@ -306,18 +320,33 @@ client.on("message", async (msg) => {
       if (iE !== -1) {
         const pessoa = dados.listaEspera.splice(iE, 1)[0];
         if (dados.listaPrincipal.length >= CONFIG().LIMITE_LISTA_PRINCIPAL) {
-          await msg.reply(`⚠️ Lista principal cheia. Não foi possível promover *${pessoa.nome}* mesmo com pagamento confirmado.\n_Use .promover quando houver vaga._`);
+          await msg.reply(`⚠️ Lista de fixos cheia. Não foi possível promover *${pessoa.nome}* mesmo com pagamento confirmado.\n_Use .promover quando houver vaga._`);
           dados.listaEspera.splice(iE, 0, pessoa); // devolve
           return;
         }
         const { removidoPorFaltaPagamento, ...resto } = pessoa;
         dados.listaPrincipal.push({ ...resto, convidado: true, pago: true, pagamentoEm: new Date().toISOString(), promovidoEm: new Date().toISOString() });
         salvarDados(dados);
-        await msg.reply(`💰 Pagamento de *${pessoa.nome}* confirmado! Promovido de volta à lista principal por *${meuNome}*.`);
+        await msg.reply(`💰 Pagamento de *${pessoa.nome}* confirmado! Promovido de volta à lista de fixos por *${meuNome}*.`);
         return;
       }
 
-      await msg.reply(`❓ Convidado "${nomeBusca}" não encontrado na lista principal nem na espera.`);
+      await msg.reply(`❓ Convidado "${nomeBusca}" não encontrado na lista de fixos nem na espera.`);
+    }
+
+    // Menção ao bot
+    else if (msg.mentionedIds?.length > 0) {
+      const botNum = client.info?.wid?.user;
+      const contacts = await msg.getMentions();
+      const foiMencionado = contacts.some((c) => c.number === botNum);
+      console.log(`[mention] mentionedIds:`, msg.mentionedIds, `botNum:`, botNum, `foiMencionado:`, foiMencionado);
+      if (!foiMencionado) return;
+      console.log(`[${new Date().toLocaleString("pt-BR")}] Bot mencionado por ${meuNome} (${numero})`);
+      const listaAberta = listaEstaAberta();
+      const statusLista = listaAberta
+        ? ` *Há uma lista em aberto!* Digite *.lista* para ver ou *.entrar* para participar.`
+        : ` A lista do racha não está aberta no momento.`;
+      await msg.reply(`🦉 Olá, *${meuNome}*! Sou a *Corujinha*, bot do ${CONFIG().TITULO}!\n\n${statusLista}\n\nSe precisar de ajuda, digite *.ajuda* 😊`);
     }
 
     // .ajuda
@@ -329,22 +358,22 @@ client.on("message", async (msg) => {
       const fmt  = (h) => h ? `${dias[h.diaSemana] ?? `dia ${h.diaSemana}`} às ${String(h.hora).padStart(2,"0")}:${String(h.minuto).padStart(2,"0")}h` : `_não configurado_`;
       let r =
         `${CONFIG().TITULO}\n\n` +
-        `📋 *Lista:*\n` +
-        `*.entrar* — Entra na lista principal\n` +
-        `*.entrar Nome* — Confirma entrada de fixo sem número\n` +
-        `*.convidar Nome* — Adiciona um convidado na espera\n` +
-        `*.remover Nome* — Remove seu convidado da espera ou sua reserva\n` +
-        `*.sair* — Sai da lista principal ou da espera\n` +
-        `*.revezar NomeReserva NomeDaLista* — Adiciona reserva para quem já está na lista\n` +
-        `\n⚙️ *Outros:*\n` +
-        `*.apelido NovoNome* — Define/troca seu apelido\n` +
+        `📋 *LISTA:*\n` +
+        `*.entrar* — Entra na lista (fixo ou convidado)\n` +
+        `*.entrar Nome* — Adiciona o fixo com esse nome na lista\n` +
+        `*.convidar Nome* — Adiciona um convidado\n` +
+        `*.remover Nome* — Remove seu convidado ou seu reserva\n` +
+        `*.sair* — Sai da lista\n` +
+        `*.revezar NomeDoReserva NomePresenteNaLista* — Adiciona reserva\n` +
+        `\n\n⚙️ *OUTROS:*\n` +
+        `*.apelido NovoNome* — Define ou troca seu apelido\n` +
         `*.lista* — Mostra a lista atual\n` +
         `*.fixos* — Mostra a lista de fixos e admins\n` +
         `*.ajuda* — Lista os comandos\n` +
-        `\n🕐 *Horários:*\n` +
-        `*Envio da lista*: ${fmt(hl)}\n` +
-        `*Promoção automática*: ${fmt(hp)}\n` +
-        `*Limite de pagamento*: ${fmt(hpg)}`;
+        `\n\n🕐 *HORÁRIOS:*\n` +
+        `*Abertura da lista*: ${fmt(hl)}\n` +
+        `*Sobe os convidados*: ${fmt(hp)}\n` +
+        `*Limite de pagamento dos convidados*: ${fmt(hpg)}`;
       if (isAdmin(numero)) {
         r += `\n\n👑 *Admin:*\n` +
           `*.promover Nome* — Move da espera para convidados\n` +
@@ -354,7 +383,7 @@ client.on("message", async (msg) => {
       await msg.reply(r);
     }
   } catch (err) {
-    console.error("Erro ao processar mensagem:", err.message);
+    console.error("[message] Erro ao processar:", err.message, err.stack);
   }
 });
 
@@ -379,13 +408,18 @@ async function enviarLista(chatOuId) {
     hour: "2-digit", minute: "2-digit"
   });
 
-  let t = `*${CONFIG().TITULO}*\n`;
-  t += `_📅 ${agora}_\n\n`;
-  t += `✅ *CONFIRMADOS — ${total}/${limite}* (${pct}%)\n`;
-  t += `\`${barra}\` ${statusVagas}\n`;
+  const agoraSP = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  const diasAteProxSexta = (5 - agoraSP.getDay() + 7) % 7 || 7;
+  const proxSexta = new Date(agoraSP);
+  proxSexta.setDate(agoraSP.getDate() + diasAteProxSexta);
+  const dataSexta = proxSexta.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "America/Sao_Paulo" });
 
-  // Seção 1 — Lista principal (fixos/regulares)
-  t += `\n📋 *Lista Principal* (${fixos.length})\n`;
+  let t = `*${CONFIG().TITULO}*\n`;
+  t += `_📅 Sexta Feira, ${dataSexta} - 19h às 22h_\n\n`;
+  t += `\`${barra}\` ${total}/${limite} (${pct}%)\n`;
+
+  // Seção 1 — Lista de fixos (fixos/regulares)
+  t += `\n *FIXOS* (${fixos.length})\n`;
   if (fixos.length === 0) {
     t += `_Nenhum confirmado ainda_\n`;
   } else {
@@ -395,7 +429,7 @@ async function enviarLista(chatOuId) {
   // Seção 2 — Convidados (promovidos da espera)
   const convsPagos    = convs.filter((p) => p.pago);
   const convsPendente = convs.filter((p) => !p.pago);
-  t += `\n🎟️ *Convidados* (${convs.length})`;
+  t += `\n *CONVIDADOS* (${convs.length})`;
   if (convs.length > 0) t += ` — 💰 ${convsPagos.length} pago${convsPagos.length !== 1 ? "s" : ""} · ⏳ ${convsPendente.length} pendente${convsPendente.length !== 1 ? "s" : ""}`;
   t += `\n`;
   if (convs.length === 0) {
@@ -410,17 +444,17 @@ async function enviarLista(chatOuId) {
 
   // Seção 3 — Reservas
   const reservas = dados.listaReservas || [];
-  t += `\n🔄 *Reservas* (${reservas.length})\n`;
+  t += `\n *RESERVAS* (${reservas.length})\n`;
   if (reservas.length === 0) {
     t += `_Nenhuma reserva cadastrada_\n`;
   } else {
     reservas.forEach((p, i) => {
-      t += `${i + 1}. ${p.nome} ↔️ ${p.revezaCom}\n`;
+      t += `${i + 1}. ${p.nome} <-> ${p.revezaCom}\n`;
     });
   }
 
   // Seção 4 — Lista de espera
-  t += `\n⏳ *Lista de Espera* (${dados.listaEspera.length})\n`;
+  t += `\n *LISTA DE ESPERA* (${dados.listaEspera.length})\n`;
   if (dados.listaEspera.length === 0) {
     t += `_Nenhum na espera_\n`;
   } else {
@@ -443,7 +477,7 @@ async function promoverListaEspera() {
   console.log(`[${agora}] Promoção automática iniciada.`);
 
   const vagasDisponiveis = CONFIG().LIMITE_LISTA_PRINCIPAL - dados.listaPrincipal.length;
-  console.log(`  → Lista principal: ${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL} | Vagas: ${vagasDisponiveis} | Espera: ${dados.listaEspera.length}`);
+  console.log(`  → Lista de fixos: ${dados.listaPrincipal.length}/${CONFIG().LIMITE_LISTA_PRINCIPAL} | Vagas: ${vagasDisponiveis} | Espera: ${dados.listaEspera.length}`);
 
   if (vagasDisponiveis <= 0 || dados.listaEspera.length === 0) {
     console.log(`  → Nenhuma promoção realizada: ${vagasDisponiveis <= 0 ? "lista cheia" : "espera vazia"}.`);
@@ -507,6 +541,7 @@ function resetarLista() {
   dados = carregarDados();
   dados.listaPrincipal = [];
   dados.listaEspera    = [];
+  dados.listaReservas  = [];
   salvarDados(dados);
   const agora = new Date().toLocaleString("pt-BR");
   console.log(`[${agora}] Lista resetada. Fixos, admins e apelidos mantidos.`);
@@ -544,12 +579,12 @@ function agendarEnvioSemanal() {
     const diaLabel  = diasSemana[h.diaSemana] ?? `dia ${h.diaSemana}`;
     const horaLabel = `${String(h.hora).padStart(2, "0")}:${String(h.minuto).padStart(2, "0")}h`;
     cron.schedule(`${h.minuto} ${h.hora} * * ${h.diaSemana}`, async () => {
-      try { await promoverListaEspera(); console.log("  → Promoção automática concluída!"); }
+      try { await promoverListaEspera(); console.log("  → Sobe os convidados concluída!"); }
       catch (e) { console.error("  → Erro na promoção:", e.message); }
     }, { timezone: "America/Sao_Paulo" });
-    console.log(`  🎟️  Promoção automática:  ${diaLabel} às ${horaLabel}`);
+    console.log(`  🎟️  Sobe os convidados:  ${diaLabel} às ${horaLabel}`);
   } else {
-    console.log("  🎟️  Promoção automática:  NÃO configurada (HORARIO_PROMOCAO ausente)");
+    console.log("  🎟️  Sobe os convidados:  NÃO configurada (HORARIO_PROMOCAO ausente)");
   }
 
   // Verifica pagamentos no horário limite
